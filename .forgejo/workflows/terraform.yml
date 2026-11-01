@@ -23,7 +23,7 @@ env:
   TF_INPUT: "false"
   TF_VERSION: "1.9.8"
   TFLINT_VERSION: "v0.54.0"
-  TRIVY_VERSION: "0.57.1"
+  TRIVY_VERSION: "0.75.0"
 
 jobs:
   fmt:
@@ -95,7 +95,10 @@ jobs:
       - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Install Trivy
         run: |
-          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin "v${TRIVY_VERSION}"
+          curl -sSfL -o "$RUNNER_TEMP/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP" trivy
+          install -m 0755 "$RUNNER_TEMP/trivy" /usr/local/bin/trivy
+          trivy --version
       - name: trivy config scan
         run: trivy config --exit-code 1 --severity HIGH,CRITICAL .
