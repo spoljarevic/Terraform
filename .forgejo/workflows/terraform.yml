@@ -1,0 +1,101 @@
+name: Terraform CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "**.tf"
+      - "**.tftest.hcl"
+      - "**.tfvars"
+      - ".tflint.hcl"
+      - ".forgejo/workflows/terraform.yml"
+  pull_request:
+    paths:
+      - "**.tf"
+      - "**.tftest.hcl"
+      - "**.tfvars"
+      - ".tflint.hcl"
+      - ".forgejo/workflows/terraform.yml"
+  workflow_dispatch:
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VERSION: "1.9.8"
+  TFLINT_VERSION: "v0.54.0"
+  TRIVY_VERSION: "0.57.1"
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: codeberg-tiny
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://github.com/hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+  validate:
+    name: Validate, lint & test
+    runs-on: codeberg-small
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://github.com/hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: https://github.com/terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: Discover Terraform root directories
+        run: |
+          find . -type f -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; \
+            | sort -u > "$RUNNER_TEMP/tf-dirs"
+          echo "Found Terraform directories:"
+          cat "$RUNNER_TEMP/tf-dirs"
+
+      - name: terraform init & validate
+        run: |
+          fail=0
+          while read -r dir; do
+            echo "::group::validate $dir"
+            terraform -chdir="$dir" init -backend=false || fail=1
+            terraform -chdir="$dir" validate || fail=1
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/tf-dirs"
+          exit $fail
+
+      - name: tflint
+        run: |
+          tflint --init --config "$PWD/.tflint.hcl"
+          tflint --recursive --config "$PWD/.tflint.hcl" --format compact
+
+      - name: terraform test
+        run: |
+          fail=0
+          while read -r dir; do
+            if ls "$dir"/*.tftest.hcl "$dir"/tests/*.tftest.hcl >/dev/null 2>&1; then
+              echo "::group::test $dir"
+              terraform -chdir="$dir" test || fail=1
+              echo "::endgroup::"
+            else
+              echo "No tests in $dir, skipping"
+            fi
+          done < "$RUNNER_TEMP/tf-dirs"
+          exit $fail
+
+  security:
+    name: Security scan
+    runs-on: codeberg-tiny
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Install Trivy
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin "v${TRIVY_VERSION}"
+      - name: trivy config scan
+        run: trivy config --exit-code 1 --severity HIGH,CRITICAL .
