@@ -40,7 +40,7 @@ jobs:
 
   validate:
     name: Validate, lint & test
-    runs-on: codeberg-small
+    runs-on: small
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
       - uses: https://github.com/hashicorp/setup-terraform@v3
